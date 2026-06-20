@@ -1,0 +1,306 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>EV Adoption Analytics Dashboard</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: 'Segoe UI', system-ui, sans-serif; background: #0f1117; color: #e2e8f0; min-height: 100vh; }
+
+  header {
+    background: linear-gradient(135deg, #1a1f2e 0%, #0f1117 100%);
+    border-bottom: 1px solid #2d3748;
+    padding: 20px 32px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+  }
+  header h1 { font-size: 1.5rem; font-weight: 700; color: #63b3ed; }
+  header span { font-size: 0.8rem; color: #718096; background: #1a202c; padding: 4px 12px; border-radius: 20px; border: 1px solid #2d3748; }
+
+  #loading-screen {
+    display: flex; flex-direction: column; align-items: center; justify-content: center;
+    height: 60vh; gap: 16px;
+  }
+  .spinner {
+    width: 48px; height: 48px; border: 4px solid #2d3748;
+    border-top-color: #63b3ed; border-radius: 50%;
+    animation: spin 0.8s linear infinite;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  #loading-screen p { color: #718096; font-size: 0.9rem; }
+
+  #error-screen {
+    display: none; flex-direction: column; align-items: center; justify-content: center;
+    height: 60vh; gap: 12px;
+  }
+  #error-screen h2 { color: #fc8181; }
+  #error-screen p { color: #718096; font-size: 0.85rem; }
+
+  .filters {
+    display: flex; gap: 16px; padding: 16px 32px;
+    background: #1a1f2e; border-bottom: 1px solid #2d3748;
+    flex-wrap: wrap; align-items: center;
+  }
+  .filters label { font-size: 0.8rem; color: #718096; margin-right: 4px; }
+  .filters select {
+    background: #0f1117; color: #e2e8f0; border: 1px solid #2d3748;
+    border-radius: 6px; padding: 6px 12px; font-size: 0.85rem; cursor: pointer;
+  }
+  .filter-group { display: flex; align-items: center; gap: 6px; }
+  #reset-btn {
+    margin-left: auto; background: transparent; color: #fc8181;
+    border: 1px solid #fc8181; border-radius: 6px; padding: 6px 16px;
+    font-size: 0.8rem; cursor: pointer; transition: all 0.2s;
+  }
+  #reset-btn:hover { background: #fc8181; color: #0f1117; }
+
+  .scorecards {
+    display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+    gap: 16px; padding: 24px 32px 0;
+  }
+  .card { background: #1a1f2e; border: 1px solid #2d3748; border-radius: 12px; padding: 20px; }
+  .card .label { font-size: 0.75rem; color: #718096; text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 8px; }
+  .card .value { font-size: 1.8rem; font-weight: 700; color: #63b3ed; }
+  .card .sub { font-size: 0.75rem; color: #4a5568; margin-top: 4px; }
+
+  .charts-grid {
+    display: grid; grid-template-columns: repeat(auto-fit, minmax(420px, 1fr));
+    gap: 20px; padding: 24px 32px 32px;
+  }
+  .chart-card { background: #1a1f2e; border: 1px solid #2d3748; border-radius: 12px; padding: 20px; }
+  .chart-card h3 { font-size: 0.85rem; color: #a0aec0; margin-bottom: 16px; text-transform: uppercase; letter-spacing: 0.05em; }
+  .chart-card canvas { max-height: 260px; }
+
+  .table-card { background: #1a1f2e; border: 1px solid #2d3748; border-radius: 12px; padding: 20px; margin: 0 32px 32px; overflow-x: auto; }
+  .table-card h3 { font-size: 0.85rem; color: #a0aec0; margin-bottom: 16px; text-transform: uppercase; letter-spacing: 0.05em; }
+  table { width: 100%; border-collapse: collapse; font-size: 0.85rem; }
+  th { background: #0f1117; color: #718096; padding: 10px 14px; text-align: left; font-weight: 600; font-size: 0.75rem; text-transform: uppercase; }
+  td { padding: 10px 14px; border-top: 1px solid #2d3748; color: #e2e8f0; }
+  tr:hover td { background: #0f1117; }
+  .badge { display: inline-block; padding: 2px 8px; border-radius: 20px; font-size: 0.72rem; font-weight: 600; }
+  .badge-green { background: #1c4532; color: #68d391; }
+  .badge-blue { background: #1a365d; color: #90cdf4; }
+  .badge-yellow { background: #3d2e00; color: #f6e05e; }
+
+  #dashboard { display: none; }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>⚡ EV Adoption Analytics</h1>
+  <span id="row-count">Loading data from AWS...</span>
+</header>
+
+<div id="loading-screen">
+  <div class="spinner"></div>
+  <p>Fetching live data from S3 via Athena...</p>
+</div>
+
+<div id="error-screen">
+  <h2>⚠️ Failed to load data</h2>
+  <p id="error-msg">Could not connect to the API.</p>
+</div>
+
+<div id="dashboard">
+  <div class="filters">
+    <div class="filter-group">
+      <label>City Type</label>
+      <select id="filter-city"><option value="">All</option></select>
+    </div>
+    <div class="filter-group">
+      <label>Vehicle Type</label>
+      <select id="filter-vehicle"><option value="">All</option></select>
+    </div>
+    <div class="filter-group">
+      <label>EV Adoption</label>
+      <select id="filter-ev"><option value="">All</option></select>
+    </div>
+    <div class="filter-group">
+      <label>Education</label>
+      <select id="filter-edu"><option value="">All</option></select>
+    </div>
+    <button id="reset-btn">Reset Filters</button>
+  </div>
+
+  <div class="scorecards">
+    <div class="card"><div class="label">Total Records</div><div class="value" id="sc-total">—</div><div class="sub">live from Athena</div></div>
+    <div class="card"><div class="label">Avg Annual Income</div><div class="value" id="sc-income">—</div><div class="sub">USD</div></div>
+    <div class="card"><div class="label">Avg Daily Commute</div><div class="value" id="sc-commute">—</div><div class="sub">km per day</div></div>
+    <div class="card"><div class="label">Avg Fuel Expense</div><div class="value" id="sc-fuel">—</div><div class="sub">per month</div></div>
+    <div class="card"><div class="label">Avg EV Knowledge</div><div class="value" id="sc-evk">—</div><div class="sub">score / 10</div></div>
+  </div>
+
+  <div class="charts-grid">
+    <div class="chart-card"><h3>EV Adoption by City Type</h3><canvas id="chart-city"></canvas></div>
+    <div class="chart-card"><h3>Current Vehicle Type Distribution</h3><canvas id="chart-vehicle"></canvas></div>
+    <div class="chart-card"><h3>Income vs Fuel Expense by Education</h3><canvas id="chart-income"></canvas></div>
+    <div class="chart-card"><h3>EV Adoption Likelihood Breakdown</h3><canvas id="chart-ev"></canvas></div>
+  </div>
+
+  <div class="table-card">
+    <h3>Sample Records (Top 50)</h3>
+    <table id="data-table"><thead></thead><tbody></tbody></table>
+  </div>
+</div>
+
+<script>
+  const API_URL = 'https://zybiuc9rbe.execute-api.ap-south-1.amazonaws.com/data';
+
+  let rawData = [];
+  let charts = {};
+  const COLORS = ['#63b3ed','#68d391','#f6ad55','#fc8181','#b794f4','#76e4f7','#fbb6ce','#c6f6d5'];
+
+  async function loadData() {
+    try {
+      const res = await fetch(API_URL);
+      if (!res.ok) throw new Error('HTTP ' + res.status);
+      const json = await res.json();
+      rawData = typeof json === 'string' ? JSON.parse(json) : json;
+      document.getElementById('loading-screen').style.display = 'none';
+      document.getElementById('dashboard').style.display = 'block';
+      populateFilters();
+      renderAll();
+    } catch (err) {
+      document.getElementById('loading-screen').style.display = 'none';
+      document.getElementById('error-screen').style.display = 'flex';
+      document.getElementById('error-msg').textContent = err.message;
+    }
+  }
+
+  function populateFilters() {
+    fillSelect('filter-city', 'city_type');
+    fillSelect('filter-vehicle', 'current_vehicle_type');
+    fillSelect('filter-ev', 'ev_adoption_likelihood');
+    fillSelect('filter-edu', 'education_level');
+    ['filter-city','filter-vehicle','filter-ev','filter-edu'].forEach(id => {
+      document.getElementById(id).addEventListener('change', renderAll);
+    });
+    document.getElementById('reset-btn').addEventListener('click', () => {
+      ['filter-city','filter-vehicle','filter-ev','filter-edu'].forEach(id => document.getElementById(id).value = '');
+      renderAll();
+    });
+  }
+
+  function fillSelect(id, field) {
+    const sel = document.getElementById(id);
+    const vals = [...new Set(rawData.map(r => r[field]).filter(Boolean))].sort();
+    vals.forEach(v => { const o = document.createElement('option'); o.value = v; o.textContent = v; sel.appendChild(o); });
+  }
+
+  function getFiltered() {
+    const city = document.getElementById('filter-city').value;
+    const veh = document.getElementById('filter-vehicle').value;
+    const ev = document.getElementById('filter-ev').value;
+    const edu = document.getElementById('filter-edu').value;
+    return rawData.filter(r =>
+      (!city || r.city_type === city) &&
+      (!veh || r.current_vehicle_type === veh) &&
+      (!ev || r.ev_adoption_likelihood === ev) &&
+      (!edu || r.education_level === edu)
+    );
+  }
+
+  function avg(data, field) {
+    const vals = data.map(r => parseFloat(r[field])).filter(v => !isNaN(v));
+    return vals.length ? vals.reduce((a,b) => a+b, 0) / vals.length : 0;
+  }
+
+  function countBy(data, field) {
+    const counts = {};
+    data.forEach(r => { const v = r[field] || 'Unknown'; counts[v] = (counts[v]||0)+1; });
+    return counts;
+  }
+
+  function renderAll() {
+    const data = getFiltered();
+    document.getElementById('row-count').textContent = `${data.length.toLocaleString()} records (live from Athena)`;
+    document.getElementById('sc-total').textContent = data.length.toLocaleString();
+    document.getElementById('sc-income').textContent = '$' + avg(data,'annual_income').toFixed(0).replace(/\B(?=(\d{3})+(?!\d))/g,',');
+    document.getElementById('sc-commute').textContent = avg(data,'daily_commute_km').toFixed(1);
+    document.getElementById('sc-fuel').textContent = '$' + avg(data,'fuel_expense_per_month').toFixed(0);
+    document.getElementById('sc-evk').textContent = avg(data,'ev_knowledge_score').toFixed(1);
+    renderBarChart('chart-city', countBy(data,'city_type'));
+    renderPieChart('chart-vehicle', countBy(data,'current_vehicle_type'));
+    renderGroupedBar('chart-income', data);
+    renderDoughnut('chart-ev', countBy(data,'ev_adoption_likelihood'));
+    renderTable(data.slice(0,50));
+  }
+
+  function destroyChart(id) { if(charts[id]) { charts[id].destroy(); delete charts[id]; } }
+
+  function renderBarChart(id, counts) {
+    destroyChart(id);
+    charts[id] = new Chart(document.getElementById(id), {
+      type: 'bar',
+      data: { labels: Object.keys(counts), datasets: [{ data: Object.values(counts), backgroundColor: COLORS, borderRadius: 6 }] },
+      options: { responsive: true, plugins: { legend: { display: false } }, scales: {
+        x: { ticks: { color: '#718096' }, grid: { color: '#1a202c' } },
+        y: { ticks: { color: '#718096' }, grid: { color: '#2d3748' } }
+      }}
+    });
+  }
+
+  function renderPieChart(id, counts) {
+    destroyChart(id);
+    charts[id] = new Chart(document.getElementById(id), {
+      type: 'pie',
+      data: { labels: Object.keys(counts), datasets: [{ data: Object.values(counts), backgroundColor: COLORS }] },
+      options: { responsive: true, plugins: { legend: { labels: { color: '#a0aec0', font: { size: 11 } } } } }
+    });
+  }
+
+  function renderDoughnut(id, counts) {
+    destroyChart(id);
+    charts[id] = new Chart(document.getElementById(id), {
+      type: 'doughnut',
+      data: { labels: Object.keys(counts), datasets: [{ data: Object.values(counts), backgroundColor: COLORS, borderWidth: 2, borderColor: '#1a1f2e' }] },
+      options: { responsive: true, plugins: { legend: { labels: { color: '#a0aec0', font: { size: 11 } } } } }
+    });
+  }
+
+  function renderGroupedBar(id, data) {
+    destroyChart(id);
+    const byEdu = {};
+    data.forEach(r => {
+      const edu = r.education_level || 'Unknown';
+      if (!byEdu[edu]) byEdu[edu] = { income: [], fuel: [] };
+      const inc = parseFloat(r.annual_income); if (!isNaN(inc)) byEdu[edu].income.push(inc);
+      const fuel = parseFloat(r.fuel_expense_per_month); if (!isNaN(fuel)) byEdu[edu].fuel.push(fuel);
+    });
+    const labels = Object.keys(byEdu);
+    charts[id] = new Chart(document.getElementById(id), {
+      type: 'bar',
+      data: { labels, datasets: [
+        { label: 'Avg Income', data: labels.map(l => { const v = byEdu[l].income; return v.length ? v.reduce((a,b)=>a+b,0)/v.length : 0; }), backgroundColor: '#63b3ed', borderRadius: 4 },
+        { label: 'Avg Fuel/mo', data: labels.map(l => { const v = byEdu[l].fuel; return v.length ? v.reduce((a,b)=>a+b,0)/v.length : 0; }), backgroundColor: '#f6ad55', borderRadius: 4 }
+      ]},
+      options: { responsive: true, plugins: { legend: { labels: { color: '#a0aec0' } } }, scales: {
+        x: { ticks: { color: '#718096', font: { size: 10 } }, grid: { color: '#1a202c' } },
+        y: { ticks: { color: '#718096' }, grid: { color: '#2d3748' } }
+      }}
+    });
+  }
+
+  function renderTable(data) {
+    if (!data.length) return;
+    const cols = ['age','city_type','education_level','current_vehicle_type','annual_income','daily_commute_km','fuel_expense_per_month','ev_adoption_likelihood','ev_knowledge_score'];
+    document.querySelector('#data-table thead').innerHTML = '<tr>' + cols.map(c => `<th>${c.replace(/_/g,' ')}</th>`).join('') + '</tr>';
+    document.querySelector('#data-table tbody').innerHTML = data.map(r => '<tr>' + cols.map(c => {
+      let val = r[c] || '—';
+      if (c === 'ev_adoption_likelihood') {
+        const cls = val === 'High' ? 'badge-green' : val === 'Medium' ? 'badge-yellow' : 'badge-blue';
+        val = `<span class="badge ${cls}">${val}</span>`;
+      }
+      if (c === 'annual_income' && r[c]) val = '$' + parseFloat(r[c]).toFixed(0).replace(/\B(?=(\d{3})+(?!\d))/g,',');
+      return `<td>${val}</td>`;
+    }).join('') + '</tr>').join('');
+  }
+
+  loadData();
+</script>
+</body>
+</html>
